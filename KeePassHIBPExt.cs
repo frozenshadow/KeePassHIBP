@@ -14,9 +14,46 @@ using KeePass.Plugins;
 using KeePass.UI;
 using KeePassLib.Serialization;
 using KeePassLib.Utility;
+using KeePassLib.Collections;
 
 namespace KeePassHIBP
 {
+    class EntryHash
+    {
+        public EntryHash(KeePassLib.PwEntry entry)
+        {
+            Entry = entry;
+            CalculateHashString();
+        }
+
+        public KeePassLib.PwEntry Entry { get; } = null;
+        public string Hash { get; private set; } = "";
+
+        public string GetFirst5HashChars()
+        {
+            return Hash.Substring(0, 5);
+        }
+
+        public string GetRemainingHashChars()
+        {
+            return Hash.Substring(5);
+        }
+
+        private void CalculateHashString()
+        {
+            ProtectedStringDictionary stringDict = Entry.Strings;
+            byte[] pw = StrUtil.Utf8.GetBytes(stringDict.ReadSafe(KeePassLib.PwDefs.PasswordField));
+            byte[] hashed = null;
+            using (SHA1 sha1 = new SHA1Managed())
+            {
+                hashed = sha1.ComputeHash(pw);
+            }
+            MemUtil.ZeroByteArray(pw);
+            Hash = MemUtil.ByteArrayToHexString(hashed);
+            MemUtil.ZeroByteArray(hashed);
+        }
+    }
+
 	public class KeePassHIBPExt : Plugin
 	{
         private IPluginHost m_host = null;
@@ -63,7 +100,8 @@ namespace KeePassHIBP
                     Text = "Have I been pwned?"
                 };
                 menuitem.Image = SmallIcon;
-                menuitem.Click += OnCheckSingleEntryClicked;
+                menuitem.Click += OnCheckSingleEntriesClicked;
+                menuitem.Paint += OnCheckSingleEntriesVisibility;
             }
             else if (t == PluginMenuType.Group)
             {
@@ -78,14 +116,78 @@ namespace KeePassHIBP
             return menuitem;
         }
 
-        private void OnCheckSingleEntryClicked(object sender, EventArgs e)
+        private void OnCheckSingleEntriesVisibility(object sender, EventArgs e)
         {
-            ;
+            if (sender is ToolStripMenuItem menuitem)
+            {
+                menuitem.Enabled = m_host.MainWindow.GetSelectedEntriesCount() > 0;
+            }
+        }
+
+        private void OnCheckSingleEntriesClicked(object sender, EventArgs e)
+        {
+            KeePassLib.PwEntry[] entries = m_host.MainWindow.GetSelectedEntries();
+            if (entries == null) return;
+            PwObjectList<KeePassLib.PwEntry> list = PwObjectList<KeePassLib.PwEntry>.FromArray(entries);
+            CheckEntries(list);
         }
 
         private void OnCheckGroupClicked(object sender, EventArgs e)
         {
-            ;
+            KeePassLib.PwGroup grp = m_host.MainWindow.GetSelectedGroup();
+            if (grp == null) return;
+            PwObjectList<KeePassLib.PwEntry> list = grp.GetEntries(true);
+            CheckEntries(list);
+        }
+
+        private void CheckEntries(PwObjectList<KeePassLib.PwEntry> list)
+        {
+            List<EntryHash> hashList = new List<EntryHash>();
+            foreach (KeePassLib.PwEntry entry in list)
+            {
+                hashList.Add(new EntryHash(entry));
+            }
+
+            HashSet<string> queryHashes = new HashSet<string>();
+
+            foreach (EntryHash eh in hashList)
+            {
+                queryHashes.Add(eh.GetFirst5HashChars());
+            }
+
+            List<string> overallResult = new List<string>();
+
+            const string ApiUrl = "https://api.pwnedpasswords.com/range/";
+            foreach (string shortHash in queryHashes)
+            {
+                string first5Chars = shortHash.Substring(0, 5);
+                string result = DownloadString(ApiUrl + first5Chars);
+
+                result = StrUtil.NormalizeNewLines(result, false);
+
+                const int Sha1SuffixLength = 35;
+
+                overallResult.AddRange(result
+                    .Split('\n')
+                    .Where(l => l.Length >= Sha1SuffixLength)
+                    .Select(l => first5Chars + l)
+                    .ToList()
+                    );
+            }
+
+            List<string> textResult = new List<string>();
+            foreach (EntryHash eh in hashList)
+            {
+                string found = overallResult.Find(x => x.Contains(eh.Hash));
+                if (found != null)
+                {
+                    string t = "Password of entry \"" + eh.Entry.Strings.ReadSafe(KeePassLib.PwDefs.TitleField) + "\" was pwned "
+                        + found.Substring(found.IndexOf(':') + 1) + " time(s).";
+                    textResult.Add(t);
+                }
+            }
+
+            MessageService.ShowInfoEx("Checked "+hashList.Count.ToString()+" password(s)", String.Join("\n", textResult.ToArray()));
         }
 
         /// <summary>
