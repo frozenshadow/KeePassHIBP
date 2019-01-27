@@ -19,6 +19,8 @@ namespace KeePassHIBP
 {
 	public class KeePassHIBPExt : Plugin
 	{
+        private IPluginHost m_host = null;
+
 		public override Image SmallIcon
 		{
 			get { return Properties.Resources.B16x16_Icon; }
@@ -31,6 +33,9 @@ namespace KeePassHIBP
 
 		public override bool Initialize(IPluginHost host)
 		{
+            if (host == null) return false;
+            m_host = host;
+
 			//Debugger.Launch();
 
 			// Workaround to support Tsl1.2 on .NET 4.0
@@ -47,12 +52,48 @@ namespace KeePassHIBP
 			GlobalWindowManager.WindowAdded -= WindowAddedHandler;
 		}
 
-		/// <summary>
-		/// Used to modify other form when they load.
-		/// </summary>
-		/// <param name="sender"></param>
-		/// <param name="e"></param>
-		private void WindowAddedHandler(object sender, GwmWindowEventArgs e)
+        public override ToolStripMenuItem GetMenuItem(PluginMenuType t)
+        {
+            ToolStripMenuItem menuitem = null;
+
+            if (t == PluginMenuType.Entry)
+            {
+                menuitem = new ToolStripMenuItem
+                {
+                    Text = "Have I been pwned?"
+                };
+                menuitem.Image = SmallIcon;
+                menuitem.Click += OnCheckSingleEntryClicked;
+            }
+            else if (t == PluginMenuType.Group)
+            {
+                menuitem = new ToolStripMenuItem
+                {
+                    Text = "Have I been pwned? (Check group)"
+                };
+                menuitem.Image = SmallIcon;
+                menuitem.Click += OnCheckGroupClicked;
+            }
+
+            return menuitem;
+        }
+
+        private void OnCheckSingleEntryClicked(object sender, EventArgs e)
+        {
+            ;
+        }
+
+        private void OnCheckGroupClicked(object sender, EventArgs e)
+        {
+            ;
+        }
+
+        /// <summary>
+        /// Used to modify other form when they load.
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void WindowAddedHandler(object sender, GwmWindowEventArgs e)
 		{
 			if (e.Form is PwEntryForm || e.Form is KeyCreationForm)
 			{
